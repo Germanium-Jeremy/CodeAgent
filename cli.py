@@ -14,7 +14,7 @@ def main():
 
     # Add an argument for the model name to use.
     # This lets users choose which model they want to chat with.
-    parser.add_argument("--model", type=str, default="llama3.2:3b",
+    parser.add_argument("--model", type=str, default="llama3",
                         help="The model to use (e.g., llama3, qwen2.5-coder:7b)")
 
     # Parse the arguments provided by the user.
