@@ -1,7 +1,18 @@
 import argparse
 import requests
 import json
+from pathlib import Path
 from config import DEFAULT_CONFIG, load_config
+from tools import TOOLS, execute_tool
+
+# Limit a user turn so a model cannot request tools forever.
+MAX_AGENT_ITERATIONS = 10
+
+# Give the model clear guidance for deciding when its file-reading tool is useful.
+TOOL_SYSTEM_INSTRUCTIONS = (
+    "When a request depends on project file contents, use read_file to inspect "
+    "the relevant file before answering. Only read files needed for the request."
+)
 
 # The main function that runs the CLI chat agent.
 def main():
@@ -22,6 +33,10 @@ def main():
     # This lets a user quickly change the agent's behavior for one run.
     parser.add_argument("--system-prompt", type=str, default=None,
                         help="System instructions for the model (overrides config.json)")
+
+    # Restrict file access to this folder; the current folder is the default.
+    parser.add_argument("--project-root", type=Path, default=Path.cwd(),
+                        help="Root folder that read_file is allowed to access")
 
     # Parse the arguments provided by the user.
     args = parser.parse_args()
@@ -78,16 +93,29 @@ def main():
     if not isinstance(system_prompt, str):
         parser.error("The system_prompt setting in config.json must be a string.")
 
+    # Resolve the root once so relative tool paths always use the same base folder.
+    project_root = args.project_root.resolve()
+
+    # Require a real directory before starting a session with file-reading access.
+    if not project_root.is_dir():
+        parser.error(f"The project root is not a directory: {project_root}")
+
     # Construct the full API endpoint for chat completions.
     # This is based on Ollama's API documentation for chat.
     chat_endpoint = f"{base_url}/api/chat"
 
     print(f"Chatting with model: {model} (Ollama URL: {base_url})")
+    print(f"File access is limited to: {project_root}")
     print("Type '/clear' to clear conversation memory, or '/exit' or '/quit' to end.\n")
 
-    # Start with a system message so its instructions apply to every model response.
-    # Keep conversation memory in this list for the lifetime of this CLI process.
-    messages = [{"role": "system", "content": system_prompt}]
+    # Combine configured instructions with guidance for the tool available in this phase.
+    effective_system_prompt = "\n\n".join(
+        instruction for instruction in (system_prompt.strip(), TOOL_SYSTEM_INSTRUCTIONS)
+        if instruction
+    )
+
+    # Keep the system message and conversation memory for this CLI process.
+    messages = [{"role": "system", "content": effective_system_prompt}]
 
     # Start an infinite loop for continuous conversation.
     while True:
@@ -109,56 +137,109 @@ def main():
         # Each message is a dictionary with a 'role' (user) and 'content' (the actual message).
         messages.append({"role": "user", "content": user_input})
 
-        try:
-            # Send the conversation history to the Ollama model.
-            # We use requests.post to send a POST request to the chat endpoint.
-            # The 'json' parameter automatically serializes the dictionary to JSON and sets the Content-Type header.
-            response = requests.post(
-                chat_endpoint,
-                json={
-                    "model": model,        # Specify the model we want to use.
-                    "messages": messages,  # Pass the entire conversation history.
-                    "stream": False        # We're not streaming the response for simplicity in this phase.
-                },
-                timeout=120  # Set a timeout for the request to prevent indefinite waiting.
-            )
-            # Raise an HTTPError for bad responses (4xx or 5xx).
-            response.raise_for_status()
+        # Repeat model requests while it is asking for one of the advertised tools.
+        for iteration in range(MAX_AGENT_ITERATIONS):
+            # Initialize the response for accurate error reporting in this iteration.
+            data = None
 
-            # Parse the JSON response from Ollama.
-            # The response contains the model's reply.
-            data = response.json()
+            try:
+                # Send conversation history and available tool schemas to Ollama.
+                response = requests.post(
+                    chat_endpoint,
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "tools": TOOLS,
+                        "stream": False,
+                    },
+                    timeout=120,
+                )
 
-            # Extract the model's message content.
-            # Ollama's chat API typically returns the message under ['message']['content'].
-            assistant_message_content = data['message']['content']
-            print(f"\nGheremiah AI :> {assistant_message_content}")
+                # Raise an HTTPError for bad responses (4xx or 5xx).
+                response.raise_for_status()
 
-            # Append the assistant's message to the conversation history.
-            # This ensures the model remembers its own replies for future turns.
-            messages.append({"role": "assistant", "content": assistant_message_content})
+                # Parse and validate the response before reading nested fields.
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise ValueError("Ollama response must be a JSON object.")
+                assistant_message = data.get("message")
+                if not isinstance(assistant_message, dict):
+                    raise ValueError("Ollama response 'message' must be an object.")
+                assistant_content = assistant_message.get("content")
+                if not isinstance(assistant_content, str):
+                    raise ValueError("Ollama response message 'content' must be text.")
+                tool_calls = assistant_message.get("tool_calls", [])
+                if not isinstance(tool_calls, list):
+                    raise ValueError("Ollama response 'tool_calls' must be a list.")
 
-        except requests.exceptions.ConnectionError as e:
-            # Handle connection errors (e.g., Ollama server not running).
-            print(f"Error: Could not connect to Ollama server at {base_url}. Is it running?")
-            print(f"Details: {e}")
-            # Do not append the error message to history to avoid polluting context with transient errors
-        except requests.exceptions.RequestException as e:
-            # Handle other request-related errors (e.g., network issues, invalid model).
-            print(f"Error during Ollama API call: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                print(f"Response content: {e.response.text}")
-            # Do not append the error message to history
-        except json.JSONDecodeError:
-            # Handle cases where the response is not valid JSON.
-            print("Error: Could not decode JSON response from Ollama.")
-            print(f"Raw response: {response.text}")
-            # Do not append the error message to history
-        except KeyError:
-            # Handle cases where the expected 'message' or 'content' key is missing.
-            print("Error: Unexpected response format from Ollama.")
-            print(f"Raw response: {json.dumps(data, indent=2)}")
-            # Do not append the error message to history
+                # Keep tool-call details in history so Ollama can connect results to requests.
+                history_message = {
+                    "role": "assistant",
+                    "content": assistant_content,
+                }
+                if tool_calls:
+                    history_message["tool_calls"] = tool_calls
+                messages.append(history_message)
+
+                # A normal assistant response completes this user turn.
+                if not tool_calls:
+                    print(f"\nGheremiah AI :> {assistant_content}")
+                    break
+
+                # Show any text the assistant included alongside its tool requests.
+                if assistant_content:
+                    print(f"\nGheremiah AI :> {assistant_content}")
+
+                # Run each requested tool and feed its result back as a tool message.
+                for tool_call in tool_calls:
+                    if not isinstance(tool_call, dict):
+                        raise ValueError("Each Ollama tool call must be an object.")
+                    function = tool_call.get("function")
+                    if not isinstance(function, dict):
+                        raise ValueError("Ollama tool call is missing its function object.")
+                    tool_name = function.get("name")
+                    tool_arguments = function.get("arguments")
+                    if not isinstance(tool_name, str):
+                        raise ValueError("Ollama tool call function name must be text.")
+
+                    # Print tool activity so the agent's work is visible while learning.
+                    print(f"[tool] {tool_name}({json.dumps(tool_arguments)})")
+
+                    # Execute only the registered tool within the chosen project root.
+                    tool_result = execute_tool(tool_name, tool_arguments, project_root)
+                    messages.append({
+                        "role": "tool",
+                        "name": tool_name,
+                        "content": tool_result,
+                    })
+
+                    # Display the exact result being sent back to the model.
+                    print(f"[tool result] {tool_result}")
+
+                # Stop after a bounded number of tool rounds for this user request.
+                if iteration == MAX_AGENT_ITERATIONS - 1:
+                    print(
+                        "\nAgent stopped after reaching the maximum of "
+                        f"{MAX_AGENT_ITERATIONS} tool iterations."
+                    )
+
+            except requests.exceptions.ConnectionError as error:
+                # Explain connection failures without adding transient errors to memory.
+                print(f"Error: Could not connect to Ollama server at {base_url}. Is it running?")
+                print(f"Details: {error}")
+                break
+            except requests.exceptions.RequestException as error:
+                # Report other HTTP or network failures and any server response body.
+                print(f"Error during Ollama API call: {error}")
+                if error.response is not None:
+                    print(f"Response content: {error.response.text}")
+                break
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                # Report malformed JSON or unexpected response structures explicitly.
+                print(f"Error: Unexpected response from Ollama: {error}")
+                if data is not None:
+                    print(f"Response content: {json.dumps(data, indent=2)}")
+                break
 
 # This ensures that main() is called only when the script is executed directly.
 if __name__ == "__main__":
