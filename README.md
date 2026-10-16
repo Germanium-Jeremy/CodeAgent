@@ -15,8 +15,8 @@ It's also a ground-up study of how agentic coding tools actually work.
 ## Features
 
 - [x] Multi-turn conversation with in-session context
-- [ ] Tool calling: `read_file`, `write_file`, `list_files`, `run_shell`
-- [ ] Agent loop with max-iteration guard
+- [x] Tool calling: `read_file`
+- [x] Agent loop with max-iteration guard
 - [ ] Provider abstraction: Ollama + OpenAI-compatible endpoints
 - [ ] Config file for provider/model selection
 - [ ] Path allowlist and command confirmation
@@ -68,22 +68,28 @@ conversation turns without exiting; the system prompt remains in effect.
 Conversation memory is not saved between runs.
 
 ```
-> what's in README.md?
-[tool] read_file(path="README.md")
-[assistant] This is the README for a CLI coding agent...
+> What's in README.md?
+[tool] read_file({"path": "README.md"})
+[assistant] The README describes Gheremiah, its setup, usage, and roadmap...
 ```
+
+The agent can read UTF-8 text files under its project root (the current
+directory by default). Set another root with `--project-root`. The model can
+request `read_file`; tool results are returned to the model so it can answer
+based on the file contents. Each user turn allows up to 10 tool iterations.
 
 ### With flags
 
 ```bash
-gheremiah --provider ollama --model qwen2.5-coder:7b
-gheremiah --provider openai --base-url http://localhost:1234/v1 --model local-model
-gheremiah --project-root ./myproject --dry-run
+python cli.py --model qwen2.5-coder:7b
+python cli.py --base-url http://localhost:11434 --model qwen2.5-coder:7b
+python cli.py --project-root .\myproject
 ```
 
 ### Exit
 
-Type `exit` or `quit`, or press `Ctrl+D`.
+Type `/exit` or `/quit`, or press `Ctrl+D`. Use `/clear` to clear the
+conversation while keeping the configured system prompt.
 
 ---
 
@@ -121,6 +127,8 @@ When `--model` or `--base-url` is omitted, the CLI uses the values under the
 configured default provider. Supplying either flag overrides only that value
 for the current run. The `--system-prompt` flag similarly overrides the
 configured `system_prompt`. The current CLI supports the Ollama provider.
+`--project-root` sets the folder the `read_file` tool can access; it defaults
+to the current working directory.
 
 ---
 
@@ -128,30 +136,25 @@ configured `system_prompt`. The current CLI supports the Ollama provider.
 
 ```
 CodeAgent/
-├── cli.py            # terminal interface, arg parsing
-├── core/
-│   ├── agent.py      # the agent loop
-│   ├── provider.py   # Ollama + OpenAI-compatible adapters
-│   ├── tools.py      # tool definitions and implementations
-│   ├── context.py    # history management and trimming
-│   └── safety.py     # path allowlist, command confirmation
+├── cli.py            # terminal interface, argument parsing, agent loop
+├── tools.py          # tool schema, read_file implementation, dispatch
 └── config.py         # config loading
 ```
 
-The core is deliberately decoupled from the CLI. A future VS Code extension
-can import `core/` directly or spawn the CLI in a JSON-lines mode.
+The CLI and first tool are kept in small, visible modules for learning. Later
+phases can separate providers, context management, and safety policies.
 
 ---
 
 ## How it works
 
-The agent is a loop:
+The agent uses a loop:
 
-1. Send `messages` + tool schemas to the model.
+1. Send `messages` and the `read_file` tool schema to the model.
 2. If the model replies with text, print it and wait for the next user turn.
 3. If the model requests a tool, execute it and append the result as a
    `role: "tool"` message.
-4. Repeat from step 1 until no tool calls are returned.
+4. Repeat until the model returns text or the iteration limit is reached.
 
 Everything else — providers, tools, safety, context — plugs into that loop.
 
@@ -159,12 +162,12 @@ Everything else — providers, tools, safety, context — plugs into that loop.
 
 ## Safety
 
-This tool can read files, write files, and run shell commands. It is
-**not sandboxed by default**.
+The current phase implements file reading only. `read_file` is restricted to
+the configured project root, including when the requested path traverses
+symlinks. File contents are provided to the model, so avoid reading secrets
+or files that should not be included in model context.
 
-- Reads and writes are restricted to `--project-root` when set.
-- Shell commands require confirmation unless `--yes` is passed.
-- Use `--dry-run` to see what the agent _would_ do without executing.
+File writing and shell commands are not implemented yet.
 
 Do not run it against untrusted models or untrusted prompts.
 
@@ -174,7 +177,7 @@ Do not run it against untrusted models or untrusted prompts.
 
 - [x] Phase 1 — Chat with the model
 - [x] Phase 2 — Memory and system prompt
-- [ ] Phase 3 — First tool and agent loop
+- [x] Phase 3 — First tool and agent loop
 - [ ] Phase 4 — Full toolset
 - [ ] Phase 5 — Provider abstraction
 - [ ] Phase 6 — Safety and context limits
