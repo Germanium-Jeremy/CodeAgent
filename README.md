@@ -14,7 +14,7 @@ It's also a ground-up study of how agentic coding tools actually work.
 
 ## Features
 
-- [x] Multi-turn conversation with persistent context
+- [x] Multi-turn conversation with in-session context
 - [ ] Tool calling: `read_file`, `write_file`, `list_files`, `run_shell`
 - [ ] Agent loop with max-iteration guard
 - [ ] Provider abstraction: Ollama + OpenAI-compatible endpoints
@@ -62,6 +62,11 @@ python -m gheremiah
 gheremiah
 ```
 
+The agent sends the configured system prompt with each request and remembers
+the current conversation while the CLI is running. Use `/clear` to discard
+conversation turns without exiting; the system prompt remains in effect.
+Conversation memory is not saved between runs.
+
 ```
 > what's in README.md?
 [tool] read_file(path="README.md")
@@ -88,6 +93,7 @@ Create `~/.gheremiah/config.json`:
 
 ```json
 {
+  "system_prompt": "You are Gheremiah, a helpful AI coding assistant. Provide concise and relevant responses.",
   "default_provider": "ollama",
   "providers": {
     "ollama": {
@@ -111,7 +117,10 @@ Create `~/.gheremiah/config.json`:
 }
 ```
 
-CLI flags override config values.
+When `--model` or `--base-url` is omitted, the CLI uses the values under the
+configured default provider. Supplying either flag overrides only that value
+for the current run. The `--system-prompt` flag similarly overrides the
+configured `system_prompt`. The current CLI supports the Ollama provider.
 
 ---
 
@@ -164,7 +173,7 @@ Do not run it against untrusted models or untrusted prompts.
 ## Roadmap
 
 - [x] Phase 1 — Chat with the model
-- [ ] Phase 2 — Memory and system prompt
+- [x] Phase 2 — Memory and system prompt
 - [ ] Phase 3 — First tool and agent loop
 - [ ] Phase 4 — Full toolset
 - [ ] Phase 5 — Provider abstraction
