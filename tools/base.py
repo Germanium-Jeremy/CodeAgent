@@ -8,13 +8,18 @@ from tools.run_shell import TOOL_SCHEMA as RUN_SHELL_SCHEMA
 from tools.run_shell import run_shell
 from tools.write_file import TOOL_SCHEMA as WRITE_FILE_SCHEMA
 from tools.write_file import write_file
+from tools.edit_file import TOOL_SCHEMA as EDIT_FILE_SCHEMA
+from tools.edit_file import edit_file
 
 # Register every tool in the order it should be advertised to the model.
 TOOL_REGISTRY = {
     "read_file": {
         "schema": READ_FILE_SCHEMA,
         "handler": lambda arguments, project_root: read_file(
-            arguments.get("path"), project_root
+            arguments.get("path"),
+            project_root,
+            start_line=arguments.get("start_line"),
+            end_line=arguments.get("end_line"),
         ),
     },
     "list_files": {
@@ -35,6 +40,16 @@ TOOL_REGISTRY = {
         "schema": RUN_SHELL_SCHEMA,
         "handler": lambda arguments, project_root: run_shell(
             arguments.get("command"), project_root
+        ),
+    },
+    "edit_file": {
+        "schema": EDIT_FILE_SCHEMA,
+        "handler": lambda arguments, project_root: edit_file(
+            arguments.get("path"),
+            arguments.get("start_line"),
+            arguments.get("end_line"),
+            arguments.get("new_content"),
+            project_root,
         ),
     },
 }
