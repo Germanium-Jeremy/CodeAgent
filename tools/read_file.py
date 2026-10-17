@@ -13,14 +13,22 @@ TOOL_SCHEMA = {
     "type": "function",
     "function": {
         "name": "read_file",
-        "description": "Read a UTF-8 text file inside the project root.",
+        "description": "Read a UTF-8 text file inside the project root. Supports reading specific line ranges.",
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": "Path to a file relative to the project root.",
-                }
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "The line number to start reading from (1-indexed).",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "The line number to stop reading at (inclusive, 1-indexed).",
+                },
             },
             "required": ["path"],
             "additionalProperties": False,
@@ -29,7 +37,7 @@ TOOL_SCHEMA = {
 }
 
 
-def read_file(file_path: str, project_root: Path) -> str:
+def read_file(file_path: str, project_root: Path, start_line: int = None, end_line: int = None) -> str:
     """Read a UTF-8 text file and explicitly mark content that was truncated."""
     try:
         # Validate root containment before accessing any file-system content.
@@ -59,13 +67,33 @@ def read_file(file_path: str, project_root: Path) -> str:
         # Surface file-system and decoding failures as tool output.
         return f"Error reading '{file_path}': {error}"
 
-    # Preserve line endings while determining whether the result exceeds our limit.
-    lines = content.splitlines(keepends=True)
-    if len(lines) <= MAX_READ_FILE_LINES:
-        return content
+    # Split content into lines to handle range-based reading and line numbering.
+    lines = content.splitlines()
+    total_lines = len(lines)
 
-    # Mark truncated output and disclose the original line count for the model.
-    truncated_content = "".join(lines[:MAX_READ_FILE_LINES])
-    if truncated_content and not truncated_content.endswith(("\n", "\r")):
-        truncated_content += "\n"
-    return f"{truncated_content}[... truncated, {len(lines)} lines total]"
+    # Determine the range of lines to return.
+    # If no start_line is given, we start at 1.
+    start_idx = max(0, (start_line or 1) - 1)
+
+    # If no end_line is given, we read up to MAX_READ_FILE_LINES from the start_idx.
+    if end_line:
+        end_idx = min(total_lines, end_line)
+    else:
+        end_idx = min(total_lines, start_idx + MAX_READ_FILE_LINES)
+
+    # Slice the lines and add line numbers for the model's reference.
+    selected_lines = lines[start_idx:end_idx]
+    formatted_lines = [
+        f"{i + 1}: {text}" for i, text in enumerate(selected_lines, start=start_idx + 1)
+    ]
+
+    result_text = "\n".join(formatted_lines)
+
+    # Provide metadata about the range and the total file size.
+    range_info = f"Lines {start_idx + 1}-{end_idx} of {total_lines}"
+
+    # Mark as truncated if we hit the max limit or if there are more lines after the end_idx.
+    if end_idx < total_lines:
+        return f"{result_text}\n\n[... truncated, {total_lines} lines total. {range_info}]"
+
+    return f"{result_text}\n\n[{range_info}]"
