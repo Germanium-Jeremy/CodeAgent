@@ -65,6 +65,6 @@ def write_file(file_path: str, content: str, project_root: Path) -> str:
         # Surface write failures; do not report success-shaped fallback results.
         return f"Error writing '{file_path}': {error}"
 
-    # Report a concise confirmation rather than copying file content into context.
+    # Report a concise confirmation and the final line count of the resulting file.
     line_count = len(content.splitlines())
-    return f"Wrote {line_count} lines to {file_path}"
+    return f"Wrote {line_count} lines to {file_path}. Total file size: {line_count} lines."
