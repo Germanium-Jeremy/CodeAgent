@@ -8,10 +8,14 @@ from tools import TOOLS, execute_tool
 # Limit a user turn so a model cannot request tools forever.
 MAX_AGENT_ITERATIONS = 10
 
-# Give the model clear guidance for deciding when its file-reading tool is useful.
+# Explain the available tools and safety prompts to the model for every turn.
 TOOL_SYSTEM_INSTRUCTIONS = (
-    "When a request depends on project file contents, use read_file to inspect "
-    "the relevant file before answering. Only read files needed for the request."
+    "Use list_files to discover project paths before reading unfamiliar files. "
+    "Use read_file when a request depends on file contents. Use write_file only "
+    "when the user asks to create or change a file; existing files require the "
+    "user's confirmation. Use run_shell only when needed; every command requires "
+    "the user's confirmation and may be declined. Never claim a tool action "
+    "succeeded unless its result confirms success."
 )
 
 # The main function that runs the CLI chat agent.
@@ -34,7 +38,7 @@ def main():
     parser.add_argument("--system-prompt", type=str, default=None,
                         help="System instructions for the model (overrides config.json)")
 
-    # Restrict file access to this folder; the current folder is the default.
+    # Set the working directory and file-access boundary for the project tools.
     parser.add_argument("--project-root", type=Path, default=Path.cwd(),
                         help="Root folder that read_file is allowed to access")
 
