@@ -18,8 +18,8 @@ It's also a ground-up study of how agentic coding tools actually work.
 - [x] Tool calling: `read_file`, `list_files`, `write_file`, `run_shell`
 - [x] Agent loop with max-iteration guard
 - [x] Project-root restriction for file tools and confirmation for shell commands
-- [ ] Provider abstraction: Ollama + OpenAI-compatible endpoints
-- [ ] Config file for provider/model selection
+- [x] Provider abstraction: Ollama + OpenAI-compatible endpoints
+- [x] Config file for provider/model selection and tool permissions
 - [ ] Shell command sandboxing
 - [ ] Context trimming for long sessions
 - [ ] Streaming output
@@ -109,6 +109,12 @@ Create `~/.gheremiah/config.json`:
 {
   "system_prompt": "You are Gheremiah, a helpful AI coding assistant. Provide concise and relevant responses.",
   "default_provider": "ollama",
+  "permissions": {
+    "read_file": true,
+    "list_files": true,
+    "write_file": true,
+    "run_shell": true
+  },
   "providers": {
     "ollama": {
       "type": "ollama",
@@ -134,7 +140,17 @@ Create `~/.gheremiah/config.json`:
 When `--model` or `--base-url` is omitted, the CLI uses the values under the
 configured default provider. Supplying either flag overrides only that value
 for the current run. The `--system-prompt` flag similarly overrides the
-configured `system_prompt`. The current CLI supports the Ollama provider.
+configured `system_prompt`. Set `default_provider` to a key in `providers` to
+select an adapter. Ollama uses its native chat API; providers with
+`"type": "openai_compatible"` use the OpenAI chat-completions API. Set
+`api_key_env` to the name of an environment variable when an endpoint needs
+authentication.
+
+The `permissions` object controls which tools are advertised and may execute.
+All tools are enabled by default. Set a tool to `false` to disable it. Existing
+file overwrites still require confirmation, and every shell command still
+requires confirmation regardless of configuration.
+
 `--project-root` sets the folder used by the file tools and as the working
 directory for shell commands; it defaults to the current working directory.
 
@@ -145,12 +161,26 @@ directory for shell commands; it defaults to the current working directory.
 ```
 CodeAgent/
 ├── cli.py            # terminal interface, argument parsing, agent loop
-├── tools.py          # tool schemas, implementations, and dispatch
+├── tools/
+│   ├── base.py       # imports and registers tools; shared dispatch
+│   ├── common.py     # shared project-path validation
+│   ├── read_file.py  # read_file schema and implementation
+│   ├── list_files.py # list_files schema and implementation
+│   ├── write_file.py # write_file schema and implementation
+│   └── run_shell.py  # run_shell schema and implementation
+├── providers/
+│   ├── base.py       # abstract interface and normalized response types
+│   ├── ollama.py     # Ollama API adapter
+│   └── openai.py     # OpenAI-compatible API adapter
 └── config.py         # config loading
 ```
 
-The CLI and first tool are kept in small, visible modules for learning. Later
-phases can separate providers, context management, and safety policies.
+The agent loop calls the provider-neutral interface. Each adapter translates
+the shared conversation and tool schemas to its API, then normalizes its
+response once at the adapter boundary. The loop does not import or inspect a
+specific provider. Tool schemas and handlers live in separate modules; the
+tool registry in `tools/base.py` gathers them for permission filtering and
+dispatch.
 
 ---
 
@@ -158,13 +188,15 @@ phases can separate providers, context management, and safety policies.
 
 The agent uses a loop:
 
-1. Send `messages` and the available tool schemas to the model.
+1. Send normalized `messages` and enabled tool schemas through the provider
+   interface.
 2. If the model replies with text, print it and wait for the next user turn.
 3. If the model requests a tool, execute it and append the result as a
    `role: "tool"` message.
 4. Repeat until the model returns text or the iteration limit is reached.
 
-Everything else — providers, tools, safety, context — plugs into that loop.
+Provider-specific request and response formats stay inside their adapters;
+everything else plugs into the same agent loop. Streaming is not implemented.
 
 ---
 
@@ -188,7 +220,7 @@ Do not run it against untrusted models or untrusted prompts.
 - [x] Phase 2 — Memory and system prompt
 - [x] Phase 3 — First tool and agent loop
 - [x] Phase 4 — Core file and shell tools
-- [ ] Phase 5 — Provider abstraction
+- [x] Phase 5 — Provider abstraction
 - [ ] Phase 6 — Safety and context limits
 - [ ] Phase 7 — Polish and packaging
 
