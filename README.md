@@ -15,11 +15,12 @@ It's also a ground-up study of how agentic coding tools actually work.
 ## Features
 
 - [x] Multi-turn conversation with in-session context
-- [x] Tool calling: `read_file`
+- [x] Tool calling: `read_file`, `list_files`, `write_file`, `run_shell`
 - [x] Agent loop with max-iteration guard
+- [x] Project-root restriction for file tools and confirmation for shell commands
 - [ ] Provider abstraction: Ollama + OpenAI-compatible endpoints
 - [ ] Config file for provider/model selection
-- [ ] Path allowlist and command confirmation
+- [ ] Shell command sandboxing
 - [ ] Context trimming for long sessions
 - [ ] Streaming output
 - [ ] CLI flags (`--model`, `--provider`, `--dry-run`)
@@ -73,10 +74,17 @@ Conversation memory is not saved between runs.
 [assistant] The README describes Gheremiah, its setup, usage, and roadmap...
 ```
 
-The agent can read UTF-8 text files under its project root (the current
-directory by default). Set another root with `--project-root`. The model can
-request `read_file`; tool results are returned to the model so it can answer
-based on the file contents. Each user turn allows up to 10 tool iterations.
+The tools operate relative to the project root (the current directory by
+default). Set another root with `--project-root`. `list_files` returns a flat
+list, skips common generated/dependency folders, and caps results at 200
+entries. `read_file` returns UTF-8 text and marks files truncated after 200
+lines. Each user turn allows up to 10 tool iterations.
+
+New files can be written without a prompt; overwriting an existing file asks
+for `y/n`. Every `run_shell` command displays the command and requires `y`
+confirmation. Commands run in the project root, time out after 60 seconds,
+and return combined output and exit status, with output capped at about 10,000
+characters.
 
 ### With flags
 
@@ -127,8 +135,8 @@ When `--model` or `--base-url` is omitted, the CLI uses the values under the
 configured default provider. Supplying either flag overrides only that value
 for the current run. The `--system-prompt` flag similarly overrides the
 configured `system_prompt`. The current CLI supports the Ollama provider.
-`--project-root` sets the folder the `read_file` tool can access; it defaults
-to the current working directory.
+`--project-root` sets the folder used by the file tools and as the working
+directory for shell commands; it defaults to the current working directory.
 
 ---
 
@@ -137,7 +145,7 @@ to the current working directory.
 ```
 CodeAgent/
 ├── cli.py            # terminal interface, argument parsing, agent loop
-├── tools.py          # tool schema, read_file implementation, dispatch
+├── tools.py          # tool schemas, implementations, and dispatch
 └── config.py         # config loading
 ```
 
@@ -150,7 +158,7 @@ phases can separate providers, context management, and safety policies.
 
 The agent uses a loop:
 
-1. Send `messages` and the `read_file` tool schema to the model.
+1. Send `messages` and the available tool schemas to the model.
 2. If the model replies with text, print it and wait for the next user turn.
 3. If the model requests a tool, execute it and append the result as a
    `role: "tool"` message.
@@ -162,12 +170,13 @@ Everything else — providers, tools, safety, context — plugs into that loop.
 
 ## Safety
 
-The current phase implements file reading only. `read_file` is restricted to
-the configured project root, including when the requested path traverses
-symlinks. File contents are provided to the model, so avoid reading secrets
-or files that should not be included in model context.
-
-File writing and shell commands are not implemented yet.
+File tools are restricted to the configured project root, including when a
+requested path traverses symlinks. `run_shell` executes commands with the
+project root as its working directory, but it is not sandboxed and a command
+may access files outside that directory. Every command requires confirmation;
+review it before approving. File contents and command output are provided to
+the model, so avoid reading secrets or files that should not be included in
+model context.
 
 Do not run it against untrusted models or untrusted prompts.
 
@@ -178,7 +187,7 @@ Do not run it against untrusted models or untrusted prompts.
 - [x] Phase 1 — Chat with the model
 - [x] Phase 2 — Memory and system prompt
 - [x] Phase 3 — First tool and agent loop
-- [ ] Phase 4 — Full toolset
+- [x] Phase 4 — Core file and shell tools
 - [ ] Phase 5 — Provider abstraction
 - [ ] Phase 6 — Safety and context limits
 - [ ] Phase 7 — Polish and packaging
