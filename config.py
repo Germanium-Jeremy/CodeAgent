@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
         "ollama": {
             "type": "ollama", # Type of the provider.
             "base_url": "http://localhost:11434", # Default base URL for Ollama.
-            "model": "llama3.2:3b" # Default model to use with Ollama.
+            "model": "qwen2.5:3b" # Default model to use with Ollama.
         },
         "local-openai": {
             "type": "openai_compatible", # Type for OpenAI-compatible local servers (e.g., LM Studio).
