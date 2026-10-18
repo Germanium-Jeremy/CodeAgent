@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 
@@ -10,6 +11,12 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".gheremiah", "confi
 DEFAULT_CONFIG = {
     "default_provider": "ollama", # Specifies the default provider to use.
     "system_prompt": "You are Gheremiah, a helpful AI coding assistant. Provide concise and relevant responses.", # Default system prompt for the AI.
+    "permissions": {
+        "read_file": True,
+        "list_files": True,
+        "write_file": True,
+        "run_shell": True
+    },
     "providers": {
         "ollama": {
             "type": "ollama", # Type of the provider.
@@ -59,7 +66,7 @@ def load_config(config_path: str = DEFAULT_CONFIG_PATH) -> dict:
             config = json.load(f)
         # Merge with defaults to ensure all keys are present, especially if the file is old or incomplete.
         # This gives precedence to values in the loaded config.
-        merged_config = DEFAULT_CONFIG.copy()
+        merged_config = copy.deepcopy(DEFAULT_CONFIG)
         _deep_update(merged_config, config) # Use a helper to deeply merge configurations.
         return merged_config
     except json.JSONDecodeError:
