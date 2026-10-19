@@ -32,6 +32,12 @@ class OpenAICompatibleProvider(BaseProvider):
     def model(self) -> str:
         return self._model
 
+    @property
+    def context_window(self) -> int:
+        """Return a reasonable default context window for OpenAI-compatible providers."""
+        # Many OpenAI-compatible providers use large windows; default to 16384 for safety.
+        return 16384
+
     def chat(
         self,
         messages: list[dict[str, Any]],
