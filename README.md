@@ -20,11 +20,12 @@ It's also a ground-up study of how agentic coding tools actually work.
 - [x] Project-root restriction for file tools and confirmation for shell commands
 - [x] Provider abstraction: Ollama + OpenAI-compatible endpoints
 - [x] Config file for provider/model selection and tool permissions
+- [x] Professional TUI with Rich (Markdown rendering, colored output)
+- [x] Installable via `pip install -e .`
+- [x] Dry-run mode for safe tool testing
 - [ ] Shell command sandboxing
 - [ ] Context trimming for long sessions
 - [ ] Streaming output
-- [ ] CLI flags (`--model`, `--provider`, `--dry-run`)
-- [ ] Installable via `pip install -e .`
 
 ---
 
@@ -41,12 +42,18 @@ It's also a ground-up study of how agentic coding tools actually work.
 
 ## Install
 
+### Editable Installation (Recommended)
+Install Gheremiah as a package so you can run it from anywhere:
+
 ```bash
 git clone https://github.com/Germanium-Jeremy/CodeAgent.git
 cd CodeAgent
 pip install -e .
 ```
 
+Once installed, you can simply type `gheremiah` in your terminal to start the agent.
+
+### Direct Run
 Or run directly without installing:
 
 ```bash
@@ -58,7 +65,6 @@ python -m gheremiah
 ## Usage
 
 ### Basic
-
 ```bash
 gheremiah
 ```
@@ -68,41 +74,43 @@ the current conversation while the CLI is running. Use `/clear` to discard
 conversation turns without exiting; the system prompt remains in effect.
 Conversation memory is not saved between runs.
 
-```
-> What's in README.md?
-[tool] read_file({"path": "README.md"})
-[assistant] The README describes Gheremiah, its setup, usage, and roadmap...
-```
-
-The tools operate relative to the project root (the current directory by
-default). Set another root with `--project-root`. `list_files` returns a flat
-list, skips common generated/dependency folders, and caps results at 200
-entries. `read_file` returns UTF-8 text and marks files truncated after 200
-lines. Each user turn allows up to 10 tool iterations.
-
-New files can be written without a prompt; overwriting an existing file asks
-for `y/n`. Every `run_shell` command displays the command and requires `y`
-confirmation. Commands run in the project root, time out after 60 seconds,
-and return combined output and exit status, with output capped at about 10,000
-characters.
-
-### With flags
+### With Flags
+You can override your configuration on a per-run basis using CLI flags:
 
 ```bash
-python cli.py --model qwen2.5-coder:7b
-python cli.py --base-url http://localhost:11434 --model qwen2.5-coder:7b
-python cli.py --project-root .\myproject
+# Override the model
+gheremiah --model qwen2.5-coder:7b
+
+# Override the provider (must be defined in config.json)
+gheremiah --provider remote
+
+# Override the API base URL
+gheremiah --base-url http://localhost:1234/v1
+
+# Set a different project root
+gheremiah --project-root ./myproject
+
+# Dry run: See what tools would be called without actually executing them
+gheremiah --dry-run
 ```
 
 ### Exit
-
 Type `/exit` or `/quit`, or press `Ctrl+D`. Use `/clear` to clear the
 conversation while keeping the configured system prompt.
 
 ---
 
-## Configuration
+## UI Guide
+Gheremiah uses a color-coded interface to help you distinguish between participants:
+- **Cyan/Green**: Assistant responses (rendered as Markdown).
+- **Magenta**: Your input prompts.
+- **Yellow**: Tool calls being made by the AI.
+- **Dim/Grey Panels**: Tool execution results.
+- **Red**: System warnings and context budget alerts.
 
+---
+
+## Configuration
 Create `~/.gheremiah/config.json`:
 
 ```json
@@ -146,11 +154,6 @@ select an adapter. Ollama uses its native chat API; providers with
 `api_key_env` to the name of an environment variable when an endpoint needs
 authentication.
 
-The `permissions` object controls which tools are advertised and may execute.
-All tools are enabled by default. Set a tool to `false` to disable it. Existing
-file overwrites still require confirmation, and every shell command still
-requires confirmation regardless of configuration.
-
 `--project-root` sets the folder used by the file tools and as the working
 directory for shell commands; it defaults to the current working directory.
 
@@ -161,6 +164,8 @@ directory for shell commands; it defaults to the current working directory.
 ```
 CodeAgent/
 ├── cli.py            # terminal interface, argument parsing, agent loop
+├── config.py         # config loading
+├── pyproject.toml    # packaging and entry point
 ├── tools/
 │   ├── base.py       # imports and registers tools; shared dispatch
 │   ├── common.py     # shared project-path validation
@@ -172,7 +177,7 @@ CodeAgent/
 │   ├── base.py       # abstract interface and normalized response types
 │   ├── ollama.py     # Ollama API adapter
 │   └── openai.py     # OpenAI-compatible API adapter
-└── config.py         # config loading
+└── requirements.txt  # dependency list
 ```
 
 The agent loop calls the provider-neutral interface. Each adapter translates
@@ -222,7 +227,7 @@ Do not run it against untrusted models or untrusted prompts.
 - [x] Phase 4 — Core file and shell tools
 - [x] Phase 5 — Provider abstraction
 - [x] Phase 6 — Safety and context limits
-- [ ] Phase 7 — Polish and packaging
+- [x] Phase 7 — Polish and packaging
 
 ---
 
