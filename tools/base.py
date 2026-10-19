@@ -60,6 +60,7 @@ def execute_tool(
     arguments: dict,
     project_root: Path,
     permissions: dict,
+    dry_run: bool = False,
 ) -> str:
     """Validate and dispatch one model-requested tool."""
     # Reject names not registered in this module before inspecting arguments.
@@ -74,6 +75,11 @@ def execute_tool(
     # Require a decoded object before tool-specific argument handling.
     if not isinstance(arguments, dict):
         return "Error: tool arguments must be a JSON object."
+
+    # Intercept mutating tools if dry_run is enabled to prevent actual side effects.
+    # We allow read-only tools (read_file, list_files) to run normally so the agent can still see project state.
+    if dry_run and tool_name in ("write_file", "run_shell"):
+        return f"[DRY RUN] Would have executed {tool_name} with arguments: {arguments}"
 
     # Delegate validation and behavior to the dedicated module for this tool.
     return entry["handler"](arguments, project_root)
