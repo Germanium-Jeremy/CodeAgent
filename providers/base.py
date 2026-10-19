@@ -37,6 +37,11 @@ class BaseProvider(ABC):
     def model(self) -> str:
         """Return the selected model name."""
 
+    @property
+    @abstractmethod
+    def context_window(self) -> int:
+        """Return the model's context window size in tokens."""
+
     @abstractmethod
     def chat(
         self,
