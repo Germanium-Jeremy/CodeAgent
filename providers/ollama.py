@@ -24,6 +24,41 @@ class OllamaProvider(BaseProvider):
     def model(self) -> str:
         return self._model
 
+    @property
+    def context_window(self) -> int:
+        """Dynamically retrieve the model's context window from Ollama's /api/show endpoint."""
+        try:
+            # Query the model details to find the context window parameter.
+            response = requests.post(
+                f"{self._base_url}/api/show",
+                json={"name": self._model},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Ollama stores model details in model_info. Look for context_length or num_ctx.
+            info = data.get("model_info", {})
+            # The parameter name can vary by model family; check common patterns.
+            for key in info:
+                if "context_length" in key.lower() or "num_ctx" in key.lower():
+                    val = info[key]
+                    if isinstance(val, int):
+                        return val
+
+            # If not found in model_info, check the template or parameters directly if available.
+            parameters = data.get("parameters", {})
+            if isinstance(parameters, dict) and "num_ctx" in parameters:
+                val = parameters["num_ctx"]
+                if isinstance(val, int):
+                    return val
+
+        except (requests.exceptions.RequestException, ValueError, KeyError):
+            # Fallback to a sensible default if retrieval fails.
+            pass
+
+        return 16384
+
     def chat(
         self,
         messages: list[dict[str, Any]],
