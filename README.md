@@ -221,7 +221,7 @@ Do not run it against untrusted models or untrusted prompts.
 - [x] Phase 3 — First tool and agent loop
 - [x] Phase 4 — Core file and shell tools
 - [x] Phase 5 — Provider abstraction
-- [ ] Phase 6 — Safety and context limits
+- [x] Phase 6 — Safety and context limits
 - [ ] Phase 7 — Polish and packaging
 
 ---
