@@ -7,9 +7,11 @@ def resolve_project_path(file_path: str, project_root: Path) -> Path:
     if not isinstance(file_path, str) or not file_path:
         raise ValueError("the path must be a non-empty string")
 
+    # Reject absolute paths and explicit parent directory traversal patterns before resolution.
+    if Path(file_path).is_absolute() or ".." in file_path:
+        raise ValueError("use a path relative to the project root and avoid '..' traversal")
+
     requested_path = Path(file_path)
-    if requested_path.is_absolute():
-        raise ValueError("use a path relative to the project root")
 
     # Resolve symlinks before checking containment so they cannot escape the root.
     resolved_root = project_root.resolve()
