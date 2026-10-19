@@ -1,9 +1,12 @@
+import os
 from pathlib import Path
 
 from tools.common import resolve_project_path
 
 # Keep the returned file content small enough to use in model context.
 MAX_READ_FILE_LINES = 200
+# Prevent DoS by refusing to read excessively large files.
+MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024  # 2 MB
 
 # Publish the tool's model-facing schema beside its implementation.
 TOOL_SCHEMA = {
@@ -39,6 +42,10 @@ def read_file(file_path: str, project_root: Path) -> str:
         # Directories and special files are not readable text files.
         if not resolved_file.is_file():
             return f"Error: not a regular file: {file_path}"
+
+        # Check file size on disk before reading to prevent memory exhaustion.
+        if resolved_file.stat().st_size > MAX_FILE_SIZE_BYTES:
+            return f"Error: file too large ({resolved_file.stat().st_size} bytes). Max limit is {MAX_FILE_SIZE_BYTES} bytes."
 
         # Read text as UTF-8; binary or invalidly encoded content reports an error.
         content = resolved_file.read_text(encoding="utf-8")
