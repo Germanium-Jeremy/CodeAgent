@@ -2,6 +2,9 @@ from pathlib import Path
 
 from tools.common import resolve_project_path
 
+# Prevent DoS by refusing to write excessively large files.
+MAX_WRITE_SIZE_BYTES = 2 * 1024 * 1024  # 2 MB
+
 # Publish the write tool schema next to the implementation that enforces its rules.
 TOOL_SCHEMA = {
     "type": "function",
@@ -35,6 +38,10 @@ def write_file(file_path: str, content: str, project_root: Path) -> str:
     # Validate both model-supplied values before touching the file system.
     if not isinstance(content, str):
         return "Error: file content must be a string."
+
+    # Enforce a size limit on the content to prevent disk space exhaustion.
+    if len(content.encode("utf-8")) > MAX_WRITE_SIZE_BYTES:
+        return f"Error: content too large. Max limit is {MAX_WRITE_SIZE_BYTES} bytes."
 
     try:
         # Resolve the path first so writes through symlinks stay inside the root.
