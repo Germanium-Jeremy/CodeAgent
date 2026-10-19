@@ -1,10 +1,10 @@
 import json
 import uuid
-from typing import Any
+from typing import Any, Generator
 
 import requests
 
-from providers.base import AssistantResponse, BaseProvider, ProviderError, ToolCall
+from providers.base import AssistantResponse, BaseProvider, ProviderError, ToolCall, StreamChunk
 
 
 class OllamaProvider(BaseProvider):
@@ -64,6 +64,25 @@ class OllamaProvider(BaseProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> AssistantResponse:
+        # For consistency, the synchronous chat method now uses the streaming implementation
+        # and aggregates all chunks into a single final response.
+        full_content = ""
+        tool_calls = []
+
+        for chunk in self.stream_chat(messages, tools):
+            if chunk.text:
+                full_content += chunk.text
+            if chunk.tool_call:
+                tool_calls.append(chunk.tool_call)
+
+        return AssistantResponse(full_content, tool_calls)
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> Generator[StreamChunk, None, None]:
+        """Stream normalized response fragments using Ollama's /api/chat streaming mode."""
         # Convert normalized tool-call history into Ollama's message format.
         ollama_messages = []
         for message in messages:
@@ -85,70 +104,78 @@ class OllamaProvider(BaseProvider):
                 converted["name"] = message["name"]
             ollama_messages.append(converted)
 
-        # Send Ollama-specific request details only from this adapter.
         try:
+            # Use stream=True to receive responses as a sequence of JSON objects.
             response = requests.post(
                 f"{self._base_url}/api/chat",
                 json={
                     "model": self._model,
                     "messages": ollama_messages,
                     "tools": tools,
-                    "stream": False,
+                    "stream": True,
                 },
                 timeout=120,
+                stream=True,
             )
             response.raise_for_status()
-            data = response.json()
-        except requests.exceptions.RequestException as error:
-            # Expose server response detail through the provider-neutral error.
-            response_text = ""
-            if error.response is not None:
-                response_text = error.response.text
-            raise ProviderError(
-                f"Ollama request failed: {error}"
-                + (f"\nResponse: {response_text}" if response_text else "")
-            ) from error
-        except ValueError as error:
-            # Requests uses ValueError for malformed JSON response bodies.
-            raise ProviderError(f"Ollama returned invalid JSON: {error}") from error
 
-        # Normalize Ollama's message and tool calls exactly once at the adapter edge.
-        if not isinstance(data, dict) or not isinstance(data.get("message"), dict):
-            raise ProviderError("Ollama response must contain a message object.")
-        message = data["message"]
-        content = message.get("content", "")
-        if content is None:
-            content = ""
-        if not isinstance(content, str):
-            raise ProviderError("Ollama message content must be text.")
+            # Iterate over the response line by line.
+            for line in response.iter_lines():
+                if not line:
+                    continue
 
-        raw_tool_calls = message.get("tool_calls", [])
-        if not isinstance(raw_tool_calls, list):
-            raise ProviderError("Ollama tool_calls must be a list.")
-
-        normalized_calls = []
-        for index, raw_tool_call in enumerate(raw_tool_calls):
-            if not isinstance(raw_tool_call, dict):
-                raise ProviderError("Ollama tool call must be an object.")
-            function = raw_tool_call.get("function")
-            if not isinstance(function, dict):
-                raise ProviderError("Ollama tool call is missing its function.")
-            name = function.get("name")
-            arguments = function.get("arguments", {})
-            if not isinstance(name, str):
-                raise ProviderError("Ollama tool call name must be text.")
-            if isinstance(arguments, str):
                 try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError as error:
-                    raise ProviderError(
-                        f"Ollama tool call arguments are invalid JSON: {error}"
-                    ) from error
-            if not isinstance(arguments, dict):
-                raise ProviderError("Ollama tool call arguments must be an object.")
-            call_id = raw_tool_call.get("id")
-            if not isinstance(call_id, str) or not call_id:
-                call_id = f"ollama-{uuid.uuid4().hex}-{index}"
-            normalized_calls.append(ToolCall(call_id, name, arguments))
+                    # Each line is a standalone JSON object.
+                    data = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
 
-        return AssistantResponse(content, normalized_calls)
+                if not isinstance(data, dict) or "message" not in data:
+                    continue
+
+                message = data["message"]
+
+                # 1. Handle streaming text content.
+                content = message.get("content")
+                if content:
+                    yield StreamChunk(text=content)
+
+                # 2. Handle tool calls.
+                # Ollama typically sends tool calls as complete objects in the stream.
+                raw_tool_calls = message.get("tool_calls")
+                if raw_tool_calls:
+                    if not isinstance(raw_tool_calls, list):
+                        continue
+
+                    for index, raw_tool_call in enumerate(raw_tool_calls):
+                        if not isinstance(raw_tool_call, dict):
+                            continue
+
+                        function = raw_tool_call.get("function")
+                        if not isinstance(function, dict):
+                            continue
+
+                        name = function.get("name")
+                        arguments = function.get("arguments", {})
+
+                        if not isinstance(name, str):
+                            continue
+
+                        # Normalize arguments from string to dict if necessary.
+                        if isinstance(arguments, str):
+                            try:
+                                arguments = json.loads(arguments)
+                            except json.JSONDecodeError:
+                                continue
+
+                        if not isinstance(arguments, dict):
+                            continue
+
+                        call_id = raw_tool_call.get("id")
+                        if not isinstance(call_id, str) or not call_id:
+                            call_id = f"ollama-stream-{uuid.uuid4().hex}-{index}"
+
+                        yield StreamChunk(tool_call=ToolCall(call_id, name, arguments))
+
+        except requests.exceptions.RequestException as error:
+            raise ProviderError(f"Ollama streaming request failed: {error}") from error

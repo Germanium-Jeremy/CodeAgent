@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generator, Optional, Union
 
 
 class ProviderError(Exception):
@@ -14,6 +14,13 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StreamChunk:
+    """A fragment of a streaming response, containing either text or a completed tool call."""
+    text: Optional[str] = None
+    tool_call: Optional[ToolCall] = None
 
 
 @dataclass(frozen=True)
@@ -49,3 +56,11 @@ class BaseProvider(ABC):
         tools: list[dict[str, Any]],
     ) -> AssistantResponse:
         """Send normalized history and tool schemas, then normalize the response."""
+
+    @abstractmethod
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> Generator[StreamChunk, None, None]:
+        """Stream normalized response fragments including text and tool calls."""

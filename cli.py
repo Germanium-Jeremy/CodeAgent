@@ -90,7 +90,7 @@ def sanitize_tool_output(content: str) -> str:
 
 
 def main() -> None:
-    """Run the provider-independent interactive agent loop with a polished Rich UI."""
+    """Run the provider-independent interactive agent loop with a polished Rich UI and streaming."""
 
     # Define CLI arguments including new provider and dry-run flags.
     parser = argparse.ArgumentParser(
@@ -242,31 +242,53 @@ def main() -> None:
                 console.print(f"\n[bold red]System:[/bold red] Context budget exceeded; trimmed oldest turns. Full history saved to .gheremiah_history.json")
 
             try:
-                assistant_response = provider.chat(messages, available_tools)
+                # --- STREAMING IMPLEMENTATION ---
+                # We now use the stream_chat interface to provide real-time feedback.
+                full_content = ""
+                collected_tool_calls = []
+
+                console.print("\n[bold cyan]Gheremiah AI :>[/bold cyan]")
+
+                # Iterate over the generator yielded by the provider.
+                for chunk in provider.stream_chat(messages, available_tools):
+                    if chunk.text:
+                        # Print token immediately to the console without a newline.
+                        console.print(chunk.text, end="")
+                        full_content += chunk.text
+                    if chunk.tool_call:
+                        # Collect tool calls to execute after the stream completes.
+                        collected_tool_calls.append(chunk.tool_call)
+
+                # Add a newline after the stream is finished.
+                console.print()
+
             except ProviderError as error:
                 console.print(f"\n[bold red]Error communicating with provider '{provider.name}': {error}[/bold red]")
                 break
 
-            history_message = {"role": "assistant", "content": assistant_response.content}
-            if assistant_response.tool_calls:
+            # Store the full accumulated response in the history for subsequent turns.
+            history_message = {"role": "assistant", "content": full_content}
+            if collected_tool_calls:
                 history_message["tool_calls"] = [
                     {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                    for tc in assistant_response.tool_calls
+                    for tc in collected_tool_calls
                 ]
             messages.append(history_message)
 
-            if not assistant_response.tool_calls:
-                # Render assistant's final response as formatted Markdown.
-                console.print("\n[bold cyan]Gheremiah AI :>[/bold cyan]")
-                console.print(Markdown(assistant_response.content))
+            # If no tools were called, the turn is complete.
+            if not collected_tool_calls:
+                # Optional: Re-render the accumulated content as Markdown for better formatting
+                # if the model provided significant structure.
+                if full_content:
+                    # To avoid double-printing, we could have printed plain text during streaming
+                    # and then a "final" rendered version, but for simplicity and speed,
+                    # we've already streamed it. If we wanted high-quality markdown, we could
+                    # use a Live display to replace the plain text with a Markdown object.
+                    pass
                 break
 
-            if assistant_response.content:
-                console.print("\n[bold cyan]Gheremiah AI :>[/bold cyan]")
-                console.print(Markdown(assistant_response.content))
-
-            # Execute tool calls with visual feedback.
-            for tool_call in assistant_response.tool_calls:
+            # Execute collected tool calls with visual feedback.
+            for tool_call in collected_tool_calls:
                 # Highlight tool calls in yellow.
                 console.print(f"\n[bold yellow]⚙ Tool Call: {tool_call.name}[/bold yellow]")
                 console.print(f"[dim]{json.dumps(tool_call.arguments, ensure_ascii=False)}[/dim]")
@@ -288,7 +310,7 @@ def main() -> None:
                     "content": safe_result,
                 })
 
-                # Render tool results in a dim panel to separate them from the conversation.
+                # Render tool results in a dim panel.
                 console.print(Panel(
                     Markdown(tool_result),
                     title="[dim]Tool Result[/dim]",
