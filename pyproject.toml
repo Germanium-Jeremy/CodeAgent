@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gheremiah"
+version = "0.1.0"
+description = "A provider-agnostic CLI coding agent"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0.0",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+gheremiah = "cli:main"
