@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from pathlib import Path
 
 from config import DEFAULT_CONFIG, load_config
@@ -8,6 +9,10 @@ from tools import TOOL_NAMES, execute_tool, get_tools
 
 # Limit a user turn so a model cannot request tools forever.
 MAX_AGENT_ITERATIONS = 10
+
+# Context Window Configuration (tokens)
+MAX_OUTPUT_TOKENS = 2048
+HEADROOM_TOKENS = 1500
 
 # Give the model instructions for using tools while leaving execution to the loop.
 TOOL_SYSTEM_INSTRUCTIONS = (
@@ -18,6 +23,67 @@ TOOL_SYSTEM_INSTRUCTIONS = (
     "needed; every command requires confirmation and may be declined. Never claim "
     "a tool action succeeded unless its result confirms success."
 )
+
+
+def estimate_tokens(text: str) -> int:
+    """Roughly estimate tokens based on 1 token ~= 4 characters."""
+    return len(text) // 4
+
+
+def save_full_history(messages: list, project_root: Path) -> None:
+    """Persist full conversation history to disk before any trimming occurs."""
+    history_path = project_root / ".gheremiah_history.json"
+    try:
+        with open(history_path, "w", encoding="utf-8") as f:
+            json.dump(messages, f, indent=2, ensure_ascii=False)
+    except OSError as error:
+        print(f"Warning: could not save history to disk: {error}")
+
+
+def trim_context(messages: list, budget: int) -> list:
+    """Apply sliding window trimming to stay within the token budget."""
+    # Always keep the system prompt (index 0).
+    system_prompt = messages[0]
+    history = messages[1:]
+
+    # Calculate current usage.
+    current_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
+
+    if current_tokens <= budget:
+        return messages
+
+    # Trim oldest turns (user + assistant + optional tool results).
+    # We must keep the most recent user message.
+    while len(history) > 1 and sum(estimate_tokens(m.get("content", "")) for m in [system_prompt] + history) > budget:
+        # Find the start of the oldest "turn group".
+        # A turn typically starts with a "user" message.
+        if history[0]["role"] == "user":
+            # Find how many messages belong to this turn (user -> assistant -> tools -> assistant...).
+            # For simplicity, we drop until the next "user" message.
+            try:
+                next_user_idx = next(i for i, m in enumerate(history) if i > 0 and m["role"] == "user")
+                history = history[next_user_idx:]
+            except StopIteration:
+                # Only one turn left, we can't trim further without losing the last user message.
+                break
+        else:
+            # This shouldn't happen if history starts with 'user', but just in case.
+            history.pop(0)
+
+    return [system_prompt] + history
+
+
+def sanitize_tool_output(content: str) -> str:
+    """Mitigate prompt injection by wrapping data and stripping common attack patterns."""
+    if not content:
+        return content
+
+    # Strip obvious injection patterns.
+    sanitized = content.replace("ignore previous instructions", "[REDACTED]")
+    sanitized = sanitized.replace("ignore all previous instructions", "[REDACTED]")
+
+    # Wrap in untrusted-data tags to signal to the model that this is inert data.
+    return f"<untrusted-data>\n{sanitized}\n</untrusted-data>"
 
 
 def main() -> None:
@@ -136,6 +202,10 @@ def main() -> None:
     # Store provider-neutral messages for the duration of this CLI process.
     messages = [{"role": "system", "content": effective_system_prompt}]
 
+    # Calculate dynamic context budget based on provider.
+    window_size = provider.context_window
+    context_budget = window_size - MAX_OUTPUT_TOKENS - HEADROOM_TOKENS
+
     # Start an interactive conversation and preserve the phase-3 agent loop.
     while True:
         # Read the next user turn from the terminal.
@@ -157,6 +227,21 @@ def main() -> None:
 
         # Repeat model calls while normalized responses request tools.
         for iteration in range(MAX_AGENT_ITERATIONS):
+            # Track and display context usage.
+            current_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
+            usage_pct = (current_tokens / window_size) * 100
+            print(f"[Context Usage: {current_tokens}/{window_size} ({usage_pct:.1f}%)]")
+
+            # Warn when reaching the 80% cap.
+            if usage_pct >= 80:
+                messages.append({"role": "system", "content": "System Note: Context is filling up. Please wrap up your current task."})
+
+            # Trim context if budget is exceeded.
+            if current_tokens > context_budget:
+                save_full_history(messages, project_root)
+                messages = trim_context(messages, context_budget)
+                print(f"[System] Context budget exceeded ({context_budget} tokens); trimmed oldest turns. Full history saved to .gheremiah_history.json")
+
             try:
                 # The adapter owns transport details and returns one normalized response.
                 assistant_response = provider.chat(messages, available_tools)
@@ -202,12 +287,16 @@ def main() -> None:
                     project_root,
                     effective_permissions,
                 )
+
+                # Mitigate prompt injection by sanitizing and wrapping tool results.
+                safe_result = sanitize_tool_output(tool_result)
+
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": tool_call.name,
-                        "content": tool_result,
+                        "content": safe_result,
                     }
                 )
                 print(f"[tool result] {tool_result}")
