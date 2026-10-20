@@ -1,5 +1,7 @@
 import subprocess
 import shlex
+import time
+import json
 from pathlib import Path
 
 # Bound command execution time and output size for predictable tool results.
@@ -37,7 +39,7 @@ TOOL_SCHEMA = {
 
 
 def run_shell(command: str, project_root: Path) -> str:
-    """Run one confirmed shell command and return bounded output plus its exit code."""
+    """Run one confirmed shell command and return a structured summary of the result."""
     # Do not execute missing or non-text command arguments.
     if not isinstance(command, str) or not command.strip():
         return "Error: command must be a non-empty string."
@@ -67,6 +69,7 @@ def run_shell(command: str, project_root: Path) -> str:
     if input().strip().lower() != "y":
         return "Command not run; user declined."
 
+    start_time = time.time()
     try:
         # Execute with shell=False to prevent shell injection.
         result = subprocess.run(
@@ -74,35 +77,36 @@ def run_shell(command: str, project_root: Path) -> str:
             cwd=project_root,
             shell=False,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=SHELL_TIMEOUT_SECONDS,
             check=False,
         )
+        duration = time.time() - start_time
         exit_code = result.returncode
-        output = result.stdout or ""
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
     except subprocess.TimeoutExpired as error:
-        # Preserve any captured output and report timeout distinctly from a normal exit.
-        exit_code = f"timed out after {SHELL_TIMEOUT_SECONDS} seconds"
-        captured_output = error.stdout or ""
-        if isinstance(captured_output, bytes):
-            output = captured_output.decode("utf-8", errors="replace")
-        else:
-            output = captured_output
+        duration = time.time() - start_time
+        exit_code = -1
+        stdout = error.stdout.decode("utf-8", errors="replace") if error.stdout else ""
+        stderr = error.stderr.decode("utf-8", errors="replace") if error.stderr else "Timed out"
     except OSError as error:
-        # Return launch failures explicitly so the model can reason about them.
         return f"Error running command: {error}"
 
-    # Limit output while stating how much was omitted.
-    if len(output) > MAX_SHELL_OUTPUT_CHARACTERS:
-        omitted_characters = len(output) - MAX_SHELL_OUTPUT_CHARACTERS
-        output = (
-            output[:MAX_SHELL_OUTPUT_CHARACTERS]
-            + f"\n[... truncated, {omitted_characters} characters omitted]"
-        )
+    # Tail the output
+    def get_tail(text, lines_count=20):
+        if not text: return "(no output)"
+        ls = text.splitlines()
+        return "\n".join(ls[-lines_count:]) if len(ls) > lines_count else text
 
-    # Include command status and combined output in every completed execution result.
-    displayed_output = output if output else "(no output)"
-    return f"Exit code: {exit_code}\nOutput:\n{displayed_output}"
+    summary = {
+        "exit_code": exit_code,
+        "duration": f"{duration:.2f}s",
+        "stdout_tail": get_tail(stdout),
+        "stderr_tail": get_tail(stderr)
+    }
+
+    return json.dumps(summary, indent=2)

@@ -186,7 +186,7 @@ def main() -> None:
         parser.error("The system_prompt setting in config.json must be a string.")
 
     # Construct the final system prompt.
-    enabled_tool_names = ", ".join(tool["function"]["name"] for tool in available_tools) or "none"
+    enabled_tool_names = ", ".join(tool.get("name", "unknown") for tool in available_tools) or "none"
     effective_system_prompt = "\n\n".join(
         instruction for instruction in (
             system_prompt.strip(),

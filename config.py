@@ -15,7 +15,63 @@ DEFAULT_CONFIG = {
         "read_file": True,
         "list_files": True,
         "write_file": True,
-        "run_shell": True
+        "run_shell": True,
+        "read_files": True,
+        "write_files": True,
+        "plan": True,
+        "tools_mgmt": True,
+        "test": True,
+        "diagnose": True,
+    },
+    "project_templates": {
+        "react": {
+            "init": "npx create-react-app .",
+            "deps": "npm install"
+        },
+        "next": {
+            "init": "npx create-next-app@latest .",
+            "deps": "npm install"
+        },
+        "nest": {
+            "init": "npx @nestjs/cli new .",
+            "deps": "npm install"
+        },
+        "vite": {
+            "init": "npm create vite@latest .",
+            "deps": "npm install"
+        },
+        "django": {
+            "init": "django-admin startproject config .",
+            "deps": "pip install django"
+        },
+        "fastapi": {
+            "init": "mkdir app && touch app/main.py",
+            "deps": "pip install fastapi uvicorn"
+        },
+        "flask": {
+            "init": "mkdir app && touch app/main.py",
+            "deps": "pip install flask"
+        },
+        "express": {
+            "init": "npm init -y",
+            "deps": "npm install express"
+        },
+        "poetry": {
+            "init": "poetry init -n",
+            "deps": "poetry install"
+        },
+        "pip": {
+            "init": "python -m venv venv",
+            "deps": "pip install"
+        },
+        "uv": {
+            "init": "uv init",
+            "deps": "uv sync"
+        },
+        "cargo": {
+            "init": "cargo init .",
+            "deps": "cargo build"
+        },
     },
     "providers": {
         "ollama": {
